@@ -1,10 +1,9 @@
-FROM python:3.12
+FROM python:3.12-slim
 LABEL MAINTAINER="clayton.feathers"
 
-ADD mirth_exporter.py .
-ADD mirthConfig.json .
-
-RUN pip install mirthpy prometheus_client
+WORKDIR /app
+RUN pip install --no-cache-dir prometheus_client requests
+COPY mirth_exporter.py mirthConfig.json ./
 EXPOSE 9001
 
-CMD ["python", "./mirth_exporter.py"]
+CMD ["python", "-u", "./mirth_exporter.py"]
