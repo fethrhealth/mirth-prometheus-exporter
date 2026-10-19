@@ -6,12 +6,18 @@ message statistics as counters so Prometheus can detect statistics resets.
 
 When Mirth cannot be reached the exporter emits only ``mirth_up 0``; it never
 emits a zero for a channel it could not observe. Dashboards must treat an
-absent series as unknown, not healthy.
+absent series as unknown, not healthy. The same rule applies to the system stats:
+a value Mirth did not return is omitted, never reported as zero.
+
+The Mirth host is exposed in the ``mirth_instance`` label rather than ``instance``,
+because Prometheus owns ``instance`` and would rename ours to ``exported_instance``
+unless the scrape job sets ``honor_labels``.
 """
 
 import json
 import logging
 import os
+import threading
 import time
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -63,6 +69,13 @@ class MirthApi:
         self.timeout = cfg["timeoutSeconds"]
         self.include_undeployed = cfg["includeUndeployed"]
         self.session: Optional[requests.Session] = None
+        # Scrapes arrive on separate server threads; guard the shared session so one
+        # thread cannot reset it while another is using it, and so a cold start logs in once.
+        self._lock = threading.RLock()
+
+    def reset_session(self) -> None:
+        with self._lock:
+            self.session = None
 
     def _login(self) -> requests.Session:
         s = requests.Session()
@@ -78,13 +91,14 @@ class MirthApi:
         return s
 
     def get(self, path: str) -> Dict[str, Any]:
-        s = self.session or self._login()
-        r = s.get(f"{self.base}{path}", verify=self.verify, timeout=self.timeout)
-        if r.status_code == 401:
-            s = self._login()
+        with self._lock:
+            s = self.session or self._login()
             r = s.get(f"{self.base}{path}", verify=self.verify, timeout=self.timeout)
-        r.raise_for_status()
-        return r.json()
+            if r.status_code == 401:
+                s = self._login()
+                r = s.get(f"{self.base}{path}", verify=self.verify, timeout=self.timeout)
+            r.raise_for_status()
+            return r.json()
 
     def channel_statuses(self) -> List[Dict[str, Any]]:
         flag = "true" if self.include_undeployed else "false"
@@ -128,6 +142,21 @@ def parse_statistics(status: Dict[str, Any]) -> Dict[str, int]:
     return out
 
 
+def to_int(value: Any) -> Optional[int]:
+    """int(value), or None when Mirth sent something that is not a number."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def to_float(value: Any) -> Optional[float]:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def child_statuses(status: Dict[str, Any]) -> List[Dict[str, Any]]:
     return unwrap_list(status.get("childStatuses"), "dashboardStatus")
 
@@ -139,13 +168,13 @@ class MirthStatsCollector:
 
     def collect(self) -> Iterable[Any]:
         started = time.monotonic()
-        up = GaugeMetricFamily("mirth_up", "1 when the Mirth REST API answered this scrape, else 0.", labels=["instance"])
-        server_state = GaugeMetricFamily("mirth_server_state", "Legacy: 0 means up, 1 means down. Prefer mirth_up.", labels=["instance"])
-        scrape_ok = GaugeMetricFamily("mirth_scrape_success", "1 when every API call in this scrape succeeded.", labels=["instance"])
-        scrape_duration = GaugeMetricFamily("mirth_scrape_duration_seconds", "Wall time of this scrape.", labels=["instance"])
-        channel_count = GaugeMetricFamily("mirth_channels_observed", "Channels returned by /channels/statuses in this scrape.", labels=["instance"])
+        up = GaugeMetricFamily("mirth_up", "1 when the Mirth REST API answered this scrape, else 0.", labels=["mirth_instance"])
+        server_state = GaugeMetricFamily("mirth_server_state", "Legacy: 0 means up, 1 means down. Prefer mirth_up.", labels=["mirth_instance"])
+        scrape_ok = GaugeMetricFamily("mirth_scrape_success", "1 when every API call in this scrape succeeded.", labels=["mirth_instance"])
+        scrape_duration = GaugeMetricFamily("mirth_scrape_duration_seconds", "Wall time of this scrape.", labels=["mirth_instance"])
+        channel_count = GaugeMetricFamily("mirth_channels_observed", "Channels returned by /channels/statuses in this scrape.", labels=["mirth_instance"])
 
-        ch_labels = ["instance", "channelName", "channelId"]
+        ch_labels = ["mirth_instance", "channelName", "channelId"]
         ch_received = CounterMetricFamily("mirth_messages_received", "Cumulative messages received by the channel since its statistics were last reset.", labels=ch_labels)
         ch_sent = CounterMetricFamily("mirth_messages_sent", "Cumulative messages sent by the channel since its statistics were last reset.", labels=ch_labels)
         ch_filtered = CounterMetricFamily("mirth_messages_filtered", "Cumulative messages filtered by the channel since its statistics were last reset.", labels=ch_labels)
@@ -154,7 +183,7 @@ class MirthStatsCollector:
         ch_state = GaugeMetricFamily("mirth_channel_state", "1 for the channel's current deployed state, 0 for every other state.", labels=ch_labels + ["state"])
         ch_started = GaugeMetricFamily("mirth_channel_started", "1 when the channel state is STARTED.", labels=ch_labels)
 
-        dst_labels = ["instance", "channelName", "channelId", "destination", "metaDataId"]
+        dst_labels = ["mirth_instance", "channelName", "channelId", "destination", "metaDataId"]
         dst_received = CounterMetricFamily("mirth_destination_messages_received", "Cumulative messages received by the connector since its statistics were last reset.", labels=dst_labels)
         dst_sent = CounterMetricFamily("mirth_destination_messages_sent", "Cumulative messages sent by the connector since its statistics were last reset.", labels=dst_labels)
         dst_filtered = CounterMetricFamily("mirth_destination_messages_filtered", "Cumulative messages filtered by the connector since its statistics were last reset.", labels=dst_labels)
@@ -164,10 +193,10 @@ class MirthStatsCollector:
         dst_started = GaugeMetricFamily("mirth_destination_started", "1 when the connector state is STARTED.", labels=dst_labels)
         dst_queue_enabled = GaugeMetricFamily("mirth_destination_queue_enabled", "1 when queuing is enabled on the destination connector.", labels=dst_labels)
 
-        disk_used = GaugeMetricFamily("mirth_server_size", "Disk used on the Mirth server volume, in bytes.", labels=["instance"])
-        disk_free = GaugeMetricFamily("mirth_server_disk_free_bytes", "Disk free on the Mirth server volume, in bytes.", labels=["instance"])
-        heap_used = GaugeMetricFamily("mirth_server_heap_used_bytes", "JVM heap allocated minus free, in bytes.", labels=["instance"])
-        cpu = GaugeMetricFamily("mirth_server_cpu_usage_percent", "CPU usage reported by Mirth.", labels=["instance"])
+        disk_used = GaugeMetricFamily("mirth_server_size", "Disk used on the Mirth server volume, in bytes.", labels=["mirth_instance"])
+        disk_free = GaugeMetricFamily("mirth_server_disk_free_bytes", "Disk free on the Mirth server volume, in bytes.", labels=["mirth_instance"])
+        heap_used = GaugeMetricFamily("mirth_server_heap_used_bytes", "JVM heap allocated minus free, in bytes.", labels=["mirth_instance"])
+        cpu = GaugeMetricFamily("mirth_server_cpu_usage_percent", "CPU usage reported by Mirth.", labels=["mirth_instance"])
 
         inst = [self.instance]
         ok = True
@@ -175,7 +204,7 @@ class MirthStatsCollector:
             statuses = self.api.channel_statuses()
         except Exception as e:  # noqa: BLE001
             log.warning("Mirth unreachable: %s", e)
-            self.api.session = None
+            self.api.reset_session()
             up.add_metric(inst, 0)
             server_state.add_metric(inst, 1)
             scrape_ok.add_metric(inst, 0)
@@ -188,46 +217,24 @@ class MirthStatsCollector:
         channel_count.add_metric(inst, len(statuses))
 
         for st in statuses:
-            cid = str(st.get("channelId", ""))
-            cname = str(st.get("name", ""))
-            labels = [self.instance, cname, cid]
-            stats = parse_statistics(st)
-            self._emit_counters(stats, labels, ch_received, ch_sent, ch_filtered, ch_errored)
-            if st.get("queued") is not None:
-                ch_queued.add_metric(labels, int(st["queued"]))
-            state = str(st.get("state", "UNKNOWN"))
-            for s in CHANNEL_STATES:
-                ch_state.add_metric(labels + [s], 1 if s == state else 0)
-            ch_started.add_metric(labels, 1 if state == "STARTED" else 0)
-
-            for child in child_statuses(st):
-                meta = str(child.get("metaDataId", ""))
-                dname = str(child.get("name", ""))
-                dlabels = [self.instance, cname, cid, dname, meta]
-                cstats = parse_statistics(child)
-                self._emit_counters(cstats, dlabels, dst_received, dst_sent, dst_filtered, dst_errored)
-                if child.get("queued") is not None:
-                    dst_queued.add_metric(dlabels, int(child["queued"]))
-                cstate = str(child.get("state", "UNKNOWN"))
-                for s in CHANNEL_STATES:
-                    dst_state.add_metric(dlabels + [s], 1 if s == cstate else 0)
-                dst_started.add_metric(dlabels, 1 if cstate == "STARTED" else 0)
-                if child.get("queueEnabled") is not None:
-                    dst_queue_enabled.add_metric(dlabels, 1 if str(child["queueEnabled"]).lower() == "true" else 0)
+            try:
+                self._collect_channel(
+                    st, (ch_received, ch_sent, ch_filtered, ch_errored, ch_queued, ch_state, ch_started),
+                    (dst_received, dst_sent, dst_filtered, dst_errored, dst_queued, dst_state, dst_started, dst_queue_enabled),
+                )
+            except Exception as e:  # noqa: BLE001
+                # One malformed channel must not take the whole scrape down; its series are
+                # simply absent (unknown) and the scrape is reported as not fully successful.
+                log.warning("skipping malformed channel status %r: %s", st.get("channelId"), e)
+                ok = False
 
         try:
             sys_stats = self.api.system_stats()
-            total = int(sys_stats.get("diskTotalBytes", 0))
-            free = int(sys_stats.get("diskFreeBytes", 0))
-            disk_used.add_metric(inst, total - free)
-            disk_free.add_metric(inst, free)
-            alloc = int(sys_stats.get("allocatedMemoryBytes", 0))
-            heap_free = int(sys_stats.get("freeMemoryBytes", 0))
-            heap_used.add_metric(inst, alloc - heap_free)
-            cpu.add_metric(inst, float(sys_stats.get("cpuUsagePct", 0.0)))
         except Exception as e:  # noqa: BLE001
             log.warning("system stats unavailable: %s", e)
             ok = False
+        else:
+            ok = self._emit_system(sys_stats, inst, disk_used, disk_free, heap_used, cpu) and ok
 
         scrape_ok.add_metric(inst, 1 if ok else 0)
         scrape_duration.add_metric(inst, time.monotonic() - started)
@@ -238,6 +245,63 @@ class MirthStatsCollector:
             dst_received, dst_sent, dst_filtered, dst_errored, dst_queued, dst_state, dst_started, dst_queue_enabled,
             disk_used, disk_free, heap_used, cpu,
         )
+
+    def _collect_channel(self, st: Dict[str, Any], ch: Any, dst: Any) -> None:
+        ch_received, ch_sent, ch_filtered, ch_errored, ch_queued, ch_state, ch_started = ch
+        dst_received, dst_sent, dst_filtered, dst_errored, dst_queued, dst_state, dst_started, dst_queue_enabled = dst
+        cid = str(st.get("channelId", ""))
+        cname = str(st.get("name", ""))
+        labels = [self.instance, cname, cid]
+        self._emit_counters(parse_statistics(st), labels, ch_received, ch_sent, ch_filtered, ch_errored)
+        queued = to_int(st.get("queued"))
+        if queued is not None:
+            ch_queued.add_metric(labels, queued)
+        state = str(st.get("state", "UNKNOWN"))
+        for s in CHANNEL_STATES:
+            ch_state.add_metric(labels + [s], 1 if s == state else 0)
+        ch_started.add_metric(labels, 1 if state == "STARTED" else 0)
+
+        for child in child_statuses(st):
+            meta = str(child.get("metaDataId", ""))
+            dname = str(child.get("name", ""))
+            dlabels = [self.instance, cname, cid, dname, meta]
+            self._emit_counters(parse_statistics(child), dlabels, dst_received, dst_sent, dst_filtered, dst_errored)
+            cqueued = to_int(child.get("queued"))
+            if cqueued is not None:
+                dst_queued.add_metric(dlabels, cqueued)
+            cstate = str(child.get("state", "UNKNOWN"))
+            for s in CHANNEL_STATES:
+                dst_state.add_metric(dlabels + [s], 1 if s == cstate else 0)
+            dst_started.add_metric(dlabels, 1 if cstate == "STARTED" else 0)
+            if child.get("queueEnabled") is not None:
+                dst_queue_enabled.add_metric(dlabels, 1 if str(child["queueEnabled"]).lower() == "true" else 0)
+
+    @staticmethod
+    def _emit_system(sys_stats: Dict[str, Any], inst: List[str], disk_used, disk_free, heap_used, cpu) -> bool:
+        """Emit only what Mirth actually returned. Returns False when anything was missing or unreadable."""
+        complete = True
+        total = to_int(sys_stats.get("diskTotalBytes"))
+        free = to_int(sys_stats.get("diskFreeBytes"))
+        if free is not None:
+            disk_free.add_metric(inst, free)
+        else:
+            complete = False
+        if total is not None and free is not None:
+            disk_used.add_metric(inst, total - free)
+        else:
+            complete = False
+        alloc = to_int(sys_stats.get("allocatedMemoryBytes"))
+        heap_free = to_int(sys_stats.get("freeMemoryBytes"))
+        if alloc is not None and heap_free is not None:
+            heap_used.add_metric(inst, alloc - heap_free)
+        else:
+            complete = False
+        cpu_pct = to_float(sys_stats.get("cpuUsagePct"))
+        if cpu_pct is not None:
+            cpu.add_metric(inst, cpu_pct)
+        else:
+            complete = False
+        return complete
 
     @staticmethod
     def _emit_counters(stats: Dict[str, int], labels: List[str], received, sent, filtered, errored) -> None:

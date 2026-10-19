@@ -48,7 +48,7 @@ A Prometheus scrape config for the Fethr compose stack is in `prometheus/prometh
 
 ## Metrics
 
-All series carry `instance` (the Mirth host as configured).
+All series carry `mirth_instance` (the Mirth host as configured). It is deliberately not called `instance`: Prometheus owns that label for the scrape target and, without `honor_labels`, renames a clashing exporter label to `exported_instance`. Anything written against the old `instance` or `exported_instance` label on these series needs to use `mirth_instance` now.
 
 ### Channel level
 

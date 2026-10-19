@@ -133,7 +133,7 @@
               "uid": "${DS_PROMETHEUS}"
             },
             "editorMode": "code",
-            "expr": "floor(increase(mirth_messages_received_total{channelName=\"$channelName\", exported_instance=~\"$mirthInstance\"}[$__rate_interval])) > 0",
+            "expr": "floor(increase(mirth_messages_received_total{channelName=\"$channelName\", mirth_instance=~\"$mirthInstance\"}[$__rate_interval])) > 0",
             "legendFormat": "__auto",
             "range": true,
             "refId": "A"
@@ -217,7 +217,7 @@
               "uid": "${DS_PROMETHEUS}"
             },
             "editorMode": "code",
-            "expr": "sum by (exported_instance, channelName) (mirth_messages_received_total{exported_instance=~\"$mirthInstance\", channelName=~\"$channelName\"} - mirth_messages_received_total{exported_instance=~\"$mirthInstance\", channelName=~\"$channelName\"} offset $__interval) > 0\r\n",
+            "expr": "sum by (mirth_instance, channelName) (mirth_messages_received_total{mirth_instance=~\"$mirthInstance\", channelName=~\"$channelName\"} - mirth_messages_received_total{mirth_instance=~\"$mirthInstance\", channelName=~\"$channelName\"} offset $__interval) > 0\r\n",
             "legendFormat": "__auto",
             "range": true,
             "refId": "A"
@@ -286,7 +286,7 @@
               "uid": "${DS_PROMETHEUS}"
             },
             "editorMode": "code",
-            "expr": "sum by (exported_instance, channelName) (mirth_messages_sent_total{exported_instance=~\"$mirthInstance\", channelName=~\"$channelName\"} - mirth_messages_sent_total{exported_instance=~\"$mirthInstance\", channelName=~\"$channelName\"} offset $__interval) > 0\r\n",
+            "expr": "sum by (mirth_instance, channelName) (mirth_messages_sent_total{mirth_instance=~\"$mirthInstance\", channelName=~\"$channelName\"} - mirth_messages_sent_total{mirth_instance=~\"$mirthInstance\", channelName=~\"$channelName\"} offset $__interval) > 0\r\n",
             "legendFormat": "__auto",
             "range": true,
             "refId": "A"
@@ -355,7 +355,7 @@
               "uid": "${DS_PROMETHEUS}"
             },
             "editorMode": "code",
-            "expr": "sum by (exported_instance, channelName) (mirth_messages_filtered_total{exported_instance=~\"$mirthInstance\", channelName=~\"$channelName\"} - mirth_messages_filtered_total{exported_instance=~\"$mirthInstance\", channelName=~\"$channelName\"} offset $__interval) > 0\r\n",
+            "expr": "sum by (mirth_instance, channelName) (mirth_messages_filtered_total{mirth_instance=~\"$mirthInstance\", channelName=~\"$channelName\"} - mirth_messages_filtered_total{mirth_instance=~\"$mirthInstance\", channelName=~\"$channelName\"} offset $__interval) > 0\r\n",
             "legendFormat": "__auto",
             "range": true,
             "refId": "A"
@@ -424,7 +424,7 @@
               "uid": "${DS_PROMETHEUS}"
             },
             "editorMode": "code",
-            "expr": "sum by (exported_instance, channelName) (mirth_messages_errored_total{exported_instance=~\"$mirthInstance\", channelName=~\"$channelName\"} - mirth_messages_errored_total{exported_instance=~\"$mirthInstance\", channelName=~\"$channelName\"} offset $__interval) > 0\r\n",
+            "expr": "sum by (mirth_instance, channelName) (mirth_messages_errored_total{mirth_instance=~\"$mirthInstance\", channelName=~\"$channelName\"} - mirth_messages_errored_total{mirth_instance=~\"$mirthInstance\", channelName=~\"$channelName\"} offset $__interval) > 0\r\n",
             "legendFormat": "__auto",
             "range": true,
             "refId": "A"
@@ -493,7 +493,7 @@
               "uid": "${DS_PROMETHEUS}"
             },
             "editorMode": "code",
-            "expr": "sum by(exported_instance, channelName) (mirth_messages_queued{exported_instance=~\"$mirthInstance\", channelName=~\"$channelName\"})",
+            "expr": "sum by(mirth_instance, channelName) (mirth_messages_queued{mirth_instance=~\"$mirthInstance\", channelName=~\"$channelName\"})",
             "legendFormat": "__auto",
             "range": true,
             "refId": "A"
@@ -601,7 +601,7 @@
               "uid": "${DS_PROMETHEUS}"
             },
             "editorMode": "code",
-            "expr": "sum by (time) (mirth_messages_received_total{exported_instance=~\"$mirthInstance\", channelName=\"$channelName\"} - mirth_messages_received_total{exported_instance=~\"$mirthInstance\", channelName=\"$channelName\"} offset $__interval)",
+            "expr": "sum by (time) (mirth_messages_received_total{mirth_instance=~\"$mirthInstance\", channelName=\"$channelName\"} - mirth_messages_received_total{mirth_instance=~\"$mirthInstance\", channelName=\"$channelName\"} offset $__interval)",
             "legendFormat": "{{time}}",
             "range": true,
             "refId": "A"
@@ -698,8 +698,8 @@
               "uid": "${DS_PROMETHEUS}"
             },
             "editorMode": "code",
-            "expr": "mirth_messages_received_total{exported_instance=~\"$mirthInstance\", channelName=\"$channelName\"} - mirth_messages_received_total{exported_instance=~\"$mirthInstance\", channelName=\"$channelName\"} offset $__interval",
-            "legendFormat": "{{exported_instance}}",
+            "expr": "mirth_messages_received_total{mirth_instance=~\"$mirthInstance\", channelName=\"$channelName\"} - mirth_messages_received_total{mirth_instance=~\"$mirthInstance\", channelName=\"$channelName\"} offset $__interval",
+            "legendFormat": "{{mirth_instance}}",
             "range": true,
             "refId": "A"
           }
@@ -793,7 +793,7 @@
               "uid": "${DS_PROMETHEUS}"
             },
             "editorMode": "code",
-            "expr": "sum by (time) (mirth_messages_sent_total{exported_instance=~\"$mirthInstance\", channelName=\"$channelName\"} - mirth_messages_sent_total{exported_instance=~\"$mirthInstance\", channelName=\"$channelName\"} offset $__interval)",
+            "expr": "sum by (time) (mirth_messages_sent_total{mirth_instance=~\"$mirthInstance\", channelName=\"$channelName\"} - mirth_messages_sent_total{mirth_instance=~\"$mirthInstance\", channelName=\"$channelName\"} offset $__interval)",
             "legendFormat": "{{time}}",
             "range": true,
             "refId": "A"
@@ -890,8 +890,8 @@
               "uid": "${DS_PROMETHEUS}"
             },
             "editorMode": "code",
-            "expr": "mirth_messages_sent_total{exported_instance=~\"$mirthInstance\", channelName=\"$channelName\"} - mirth_messages_sent_total{exported_instance=~\"$mirthInstance\", channelName=\"$channelName\"} offset $__interval",
-            "legendFormat": "{{exported_instance}}",
+            "expr": "mirth_messages_sent_total{mirth_instance=~\"$mirthInstance\", channelName=\"$channelName\"} - mirth_messages_sent_total{mirth_instance=~\"$mirthInstance\", channelName=\"$channelName\"} offset $__interval",
+            "legendFormat": "{{mirth_instance}}",
             "range": true,
             "refId": "A"
           }
@@ -985,7 +985,7 @@
               "uid": "${DS_PROMETHEUS}"
             },
             "editorMode": "code",
-            "expr": "sum by (time) (mirth_messages_errored_total{exported_instance=~\"$mirthInstance\", channelName=\"$channelName\"} - mirth_messages_errored_total{exported_instance=~\"$mirthInstance\", channelName=\"$channelName\"} offset $__interval)",
+            "expr": "sum by (time) (mirth_messages_errored_total{mirth_instance=~\"$mirthInstance\", channelName=\"$channelName\"} - mirth_messages_errored_total{mirth_instance=~\"$mirthInstance\", channelName=\"$channelName\"} offset $__interval)",
             "legendFormat": "{{time}}",
             "range": true,
             "refId": "A"
@@ -1082,8 +1082,8 @@
               "uid": "${DS_PROMETHEUS}"
             },
             "editorMode": "code",
-            "expr": "mirth_messages_errored_total{exported_instance=~\"$mirthInstance\", channelName=\"$channelName\"} - mirth_messages_errored_total{exported_instance=~\"$mirthInstance\", channelName=\"$channelName\"} offset $__interval",
-            "legendFormat": "{{exported_instance}}",
+            "expr": "mirth_messages_errored_total{mirth_instance=~\"$mirthInstance\", channelName=\"$channelName\"} - mirth_messages_errored_total{mirth_instance=~\"$mirthInstance\", channelName=\"$channelName\"} offset $__interval",
+            "legendFormat": "{{mirth_instance}}",
             "range": true,
             "refId": "A"
           }
@@ -1177,7 +1177,7 @@
               "uid": "${DS_PROMETHEUS}"
             },
             "editorMode": "code",
-            "expr": "sum by (time) (mirth_messages_filtered_total{exported_instance=~\"$mirthInstance\", channelName=\"$channelName\"} - mirth_messages_filtered_total{exported_instance=~\"$mirthInstance\", channelName=\"$channelName\"} offset $__interval)",
+            "expr": "sum by (time) (mirth_messages_filtered_total{mirth_instance=~\"$mirthInstance\", channelName=\"$channelName\"} - mirth_messages_filtered_total{mirth_instance=~\"$mirthInstance\", channelName=\"$channelName\"} offset $__interval)",
             "legendFormat": "{{time}}",
             "range": true,
             "refId": "A"
@@ -1274,8 +1274,8 @@
               "uid": "${DS_PROMETHEUS}"
             },
             "editorMode": "code",
-            "expr": "mirth_messages_filtered_total{exported_instance=~\"$mirthInstance\", channelName=\"$channelName\"} - mirth_messages_filtered_total{exported_instance=~\"$mirthInstance\", channelName=\"$channelName\"} offset $__interval",
-            "legendFormat": "{{exported_instance}}",
+            "expr": "mirth_messages_filtered_total{mirth_instance=~\"$mirthInstance\", channelName=\"$channelName\"} - mirth_messages_filtered_total{mirth_instance=~\"$mirthInstance\", channelName=\"$channelName\"} offset $__interval",
+            "legendFormat": "{{mirth_instance}}",
             "range": true,
             "refId": "A"
           }
@@ -1296,7 +1296,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "definition": "label_values(mirth_server_state,exported_instance)",
+          "definition": "label_values(mirth_server_state,mirth_instance)",
           "description": "Mirth Instance from prometheus",
           "hide": 0,
           "includeAll": false,
@@ -1306,7 +1306,7 @@
           "options": [],
           "query": {
             "qryType": 1,
-            "query": "label_values(mirth_server_state,exported_instance)",
+            "query": "label_values(mirth_server_state,mirth_instance)",
             "refId": "PrometheusVariableQueryEditor-VariableQuery"
           },
           "refresh": 1,
@@ -1321,7 +1321,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "definition": "label_values(mirth_messages_received_total{exported_instance=\"$mirthInstance\"},channelName)",
+          "definition": "label_values(mirth_messages_received_total{mirth_instance=\"$mirthInstance\"},channelName)",
           "hide": 0,
           "includeAll": false,
           "label": "Channel",
@@ -1330,7 +1330,7 @@
           "options": [],
           "query": {
             "qryType": 1,
-            "query": "label_values(mirth_messages_received_total{exported_instance=\"$mirthInstance\"},channelName)",
+            "query": "label_values(mirth_messages_received_total{mirth_instance=\"$mirthInstance\"},channelName)",
             "refId": "PrometheusVariableQueryEditor-VariableQuery"
           },
           "refresh": 1,
