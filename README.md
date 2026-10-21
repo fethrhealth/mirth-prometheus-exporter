@@ -28,6 +28,9 @@ pip install prometheus_client requests
 | `verifyTls` | `MIRTH_VERIFY_TLS` | `false` | Verify Mirth's certificate. Mirth ships self-signed. |
 | `includeUndeployed` | `MIRTH_INCLUDE_UNDEPLOYED` | `true` | Also report channels that are not deployed. |
 | `timeoutSeconds` | `MIRTH_TIMEOUT_SECONDS` | `10` | HTTP timeout per API call. |
+| `queueAgeEnabled` | `MIRTH_QUEUE_AGE_ENABLED` | `true` | Look up the oldest queued message per destination in a background task. |
+| `queueAgeIntervalSeconds` | `MIRTH_QUEUE_AGE_INTERVAL_SECONDS` | `60` | Pause between queue age cycles. An answer older than three intervals is treated as unknown. |
+| `queueAgeMaxLookupsPerCycle` | `MIRTH_QUEUE_AGE_MAX_LOOKUPS` | `25` | Most destinations looked up in one cycle. |
 
 The exporter logs in once and reuses the session cookie. It logs in again on a 401.
 
@@ -78,6 +81,7 @@ Labels: `channelName`, `channelId`, `destination` (connector name), `metaDataId`
 | `mirth_destination_state` | gauge | One series per state with label `state`; 1 for the current state. |
 | `mirth_destination_started` | gauge | 1 when the connector state is `STARTED`. |
 | `mirth_destination_queue_enabled` | gauge | 1 when queuing is enabled on the connector. |
+| `mirth_destination_oldest_queued_age_seconds` | gauge | Age of the oldest message queued on this connector. 0 when the dashboard shows an empty queue. Absent when the age has not been observed. |
 
 ### Server and scrape health
 
@@ -88,6 +92,8 @@ Labels: `channelName`, `channelId`, `destination` (connector name), `metaDataId`
 | `mirth_scrape_success` | gauge | 1 when every API call in the scrape succeeded. |
 | `mirth_scrape_duration_seconds` | gauge | Wall time of the scrape. |
 | `mirth_channels_observed` | gauge | Channels returned by the status call. |
+| `mirth_queue_age_lookup_errors_total` | counter | Failed queue age lookups since the exporter started. Present when the queue age task is enabled. |
+| `mirth_queue_age_last_run_timestamp_seconds` | gauge | Unix time the queue age task last finished a cycle. Absent until the first cycle. |
 | `mirth_server_size` | gauge | Disk used on the Mirth volume, bytes. |
 | `mirth_server_disk_free_bytes` | gauge | Disk free on the Mirth volume, bytes. |
 | `mirth_server_heap_used_bytes` | gauge | JVM heap allocated minus free, bytes. |
@@ -124,7 +130,7 @@ What this exporter can and cannot get from the Mirth REST API. Rows marked unsup
 | Server disk, heap, CPU | supported | `/system/stats` | Point-in-time values. |
 | Statistics reset detection | supported | counter type | Prometheus counter semantics; a reset shows as a counter reset, never a negative rate. |
 | Lifetime statistics | unsupported | `lifetimeStatistics` exists in the payload | Not emitted. Would double the series count for values the current counters already cover. Add if a dashboard needs since-creation totals. |
-| Oldest queued message age | unsupported | not in `/channels/statuses` | Needs a message search per channel ordered by received date with a queued status filter, and stored messages may be pruned. Not available from the dashboard payload. |
+| Oldest queued message age per destination | supported (bounded, approximate) | `GET /channels/{id}/messages/count` and `GET /channels/{id}/messages` filtered by `status=QUEUED` and `includedMetaDataId` | Looked up by a background task, only for destinations whose dashboard queue is above zero, at most `queueAgeMaxLookupsPerCycle` per cycle, and never during a scrape. See "Queue age" below. |
 | Last message received timestamp | unsupported | not in `/channels/statuses` | Needs `/channels/{id}/messages` with `limit=1`, one call per channel per scrape. The Fethr orchestrator already does this on demand; a 15-second poll across an estate is too expensive. |
 | Last successful delivery timestamp | unsupported | not in `/channels/statuses` | Same message-search cost, and the latest stored message is not necessarily the last successful downstream delivery. |
 | Message processing latency | unsupported | not in `/channels/statuses` | Only derivable per message from `connectorMessages` timestamps. |
@@ -140,3 +146,24 @@ python -m unittest test_mirth_exporter
 ```
 
 The tests use Jettison-shaped fixtures and a fake API, so they run without a Mirth server.
+
+## Queue age
+
+`mirth_destination_oldest_queued_age_seconds` is built from two things: the live queue depth that the scrape already reads, and a background lookup of the oldest queued message.
+
+How it works:
+
+- Each scrape records which destinations have a queue above zero. A background thread asks Mirth for the oldest message of those destinations, at most `queueAgeMaxLookupsPerCycle` per cycle, the ones observed longest ago first. A scrape never waits for a lookup.
+- Mirth returns search results newest first, so the oldest message is the last row. The lookup counts the `QUEUED` messages of the destination and then fetches only the row at `offset = count - 1` with `limit = 1` and `includeContent=false`. No message content is read.
+- The result is stored as a timestamp, and the age is computed at scrape time, so it keeps growing correctly between lookups.
+- The age is `0` when the dashboard shows an empty queue. It is absent (unknown) when the queue is above zero and no fresh answer exists: before the first lookup, after a failed lookup, or when the answer is older than three intervals. Absent never means zero.
+
+Limits:
+
+- The age is approximate. Messages that arrive or drain between the count and the fetch move the row by a few places.
+- The age uses the received date of the destination's connector message, falling back to the message's received date. It is compared with the exporter host's clock, so both clocks must be in sync.
+- Lookups share the Mirth session with the scrape, so a slow lookup can delay a scrape by up to one request timeout.
+- Pruned or never-stored messages cannot be found. A channel whose message storage is `DISABLED` has no messages to search, so its age stays absent. Mirth deploys a channel with queueing enabled only when its storage settings support queueing.
+- Last delivery is not collected here. The alerting design derives it from hourly rollups of the delivered counters instead, because Mirth prunes `SENT` messages.
+- The request and response shapes follow the Mirth 4.5 source and the way the Fethr orchestrator already parses messages. They have been tested only against fixtures here and still need to be confirmed against a running Mirth 4.5.2.
+

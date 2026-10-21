@@ -190,5 +190,171 @@ class ExporterTests(unittest.TestCase):
         self.assertEqual(mx.unwrap_list({}, "a"), [])
 
 
+
+class FakeClock:
+    def __init__(self, now: float):
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def message_with_queued_destination(meta, received_ms, single=False):
+    entry = {"int": meta, "connectorMessage": {"metaDataId": meta, "status": "QUEUED", "receivedDate": {"time": received_ms, "timezone": "UTC"}}}
+    return {"messageId": 7, "receivedDate": {"time": received_ms - 5000, "timezone": "UTC"},
+            "connectorMessages": {"entry": entry if single else [{"int": 0, "connectorMessage": {"metaDataId": 0, "status": "TRANSFORMED", "receivedDate": {"time": received_ms - 5000}}}, entry]}}
+
+
+def make_api(responses):
+    api = mx.MirthApi({"instance": "h", "mirthPort": 1, "username": "u", "password": "p",
+                       "verifyTls": False, "timeoutSeconds": 1, "includeUndeployed": True})
+    api.calls = []
+
+    def fake_get(path):
+        api.calls.append(path)
+        return responses.pop(0)
+
+    api.get = fake_get
+    return api
+
+
+class QueueAgeApiTests(unittest.TestCase):
+    def test_reads_the_last_row_of_the_queued_search_without_content(self):
+        api = make_api([{"long": 3}, {"list": {"message": message_with_queued_destination(1, 1_700_000_000_000, single=True)}}])
+        self.assertEqual(api.oldest_queued_received("chan-1", "1"), 1_700_000_000.0)
+        self.assertEqual(api.calls[0], "/channels/chan-1/messages/count?status=QUEUED&includedMetaDataId=1")
+        self.assertEqual(api.calls[1], "/channels/chan-1/messages?status=QUEUED&includedMetaDataId=1&includeContent=false&limit=1&offset=2")
+
+    def test_empty_queue_needs_only_the_count(self):
+        api = make_api([{"long": 0}])
+        self.assertIsNone(api.oldest_queued_received("chan-1", "1"))
+        self.assertEqual(len(api.calls), 1)
+
+    def test_queue_drained_between_count_and_fetch_is_none(self):
+        api = make_api([{"long": 2}, {"list": {}}])
+        self.assertIsNone(api.oldest_queued_received("chan-1", "1"))
+
+    def test_uses_the_destination_entry_in_a_list_of_connector_messages(self):
+        api = make_api([{"long": 1}, {"list": {"message": [message_with_queued_destination(2, 1_700_000_100_000)]}}])
+        self.assertEqual(api.oldest_queued_received("chan-1", "2"), 1_700_000_100.0)
+
+    def test_falls_back_to_the_message_received_date(self):
+        msg = {"messageId": 1, "receivedDate": {"time": 1_700_000_200_000}, "connectorMessages": {"entry": []}}
+        api = make_api([{"long": 1}, {"list": {"message": msg}}])
+        self.assertEqual(api.oldest_queued_received("chan-1", "1"), 1_700_000_200.0)
+
+    def test_message_without_any_date_raises_instead_of_guessing(self):
+        api = make_api([{"long": 1}, {"list": {"message": {"messageId": 1}}}])
+        with self.assertRaises(ValueError):
+            api.oldest_queued_received("chan-1", "1")
+
+    def test_unexpected_count_payload_raises(self):
+        api = make_api([{"unexpected": True}])
+        with self.assertRaises(ValueError):
+            api.oldest_queued_received("chan-1", "1")
+
+
+class FakeQueueApi:
+    def __init__(self, answers):
+        self.answers = answers  # key -> float | None | Exception
+        self.asked = []
+
+    def oldest_queued_received(self, channel_id, meta_id):
+        self.asked.append((channel_id, meta_id))
+        answer = self.answers[(channel_id, meta_id)]
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+
+class QueueAgeTrackerTests(unittest.TestCase):
+    def test_limits_lookups_per_cycle_and_asks_longest_unobserved_first(self):
+        clock = FakeClock(1000.0)
+        keys = [("c1", "1"), ("c2", "1"), ("c3", "1")]
+        api = FakeQueueApi({k: 900.0 for k in keys})
+        tracker = mx.QueueAgeTracker(api, interval=60, max_lookups=2, clock=clock)
+        tracker.update_targets(keys)
+        tracker.run_once()
+        self.assertEqual(len(api.asked), 2)
+        clock.now += 10
+        api.asked.clear()
+        tracker.run_once()
+        self.assertEqual(api.asked[0], keys[2])  # the one never observed goes first
+
+    def test_failed_lookup_stays_unknown_and_is_counted(self):
+        api = FakeQueueApi({("c1", "1"): RuntimeError("boom")})
+        tracker = mx.QueueAgeTracker(api, interval=60, max_lookups=5, clock=FakeClock(1000.0))
+        tracker.update_targets([("c1", "1")])
+        tracker.run_once()
+        self.assertIsNone(tracker.oldest_received(("c1", "1")))
+        self.assertEqual(tracker.errors, 1)
+        self.assertEqual(tracker.last_run, 1000.0)
+
+    def test_answers_expire_after_three_intervals(self):
+        clock = FakeClock(1000.0)
+        tracker = mx.QueueAgeTracker(FakeQueueApi({("c1", "1"): 900.0}), interval=60, max_lookups=5, clock=clock)
+        tracker.update_targets([("c1", "1")])
+        tracker.run_once()
+        self.assertEqual(tracker.oldest_received(("c1", "1")), 900.0)
+        clock.now += 181
+        self.assertIsNone(tracker.oldest_received(("c1", "1")))
+
+    def test_drained_queue_and_dropped_targets_are_forgotten(self):
+        api = FakeQueueApi({("c1", "1"): 900.0, ("c2", "1"): 800.0})
+        tracker = mx.QueueAgeTracker(api, interval=60, max_lookups=5, clock=FakeClock(1000.0))
+        tracker.update_targets([("c1", "1"), ("c2", "1")])
+        tracker.run_once()
+        tracker.update_targets([("c1", "1")])
+        self.assertIsNone(tracker.oldest_received(("c2", "1")))
+        api.answers[("c1", "1")] = None
+        tracker.run_once()
+        self.assertIsNone(tracker.oldest_received(("c1", "1")))
+
+
+class QueueAgeCollectorTests(unittest.TestCase):
+    def collector_output(self, destinations, tracker=None, now=1000.0):
+        statuses = [channel("abc", "ADT Outbound", "STARTED", 0, destinations)]
+        reg = CollectorRegistry()
+        reg.register(mx.MirthStatsCollector(FakeApi(statuses), "mirth-test", tracker, clock=FakeClock(now)))
+        return generate_latest(reg).decode()
+
+    def test_age_is_zero_when_the_dashboard_says_the_queue_is_empty(self):
+        tracker = mx.QueueAgeTracker(FakeQueueApi({}), interval=60, max_lookups=5, clock=FakeClock(1000.0))
+        out = self.collector_output([destination(1, "Lab", "STARTED", queued=0, sent=1, error=0)], tracker)
+        self.assertIn('mirth_destination_oldest_queued_age_seconds{channelId="abc",channelName="ADT Outbound",destination="Lab",metaDataId="1",mirth_instance="mirth-test"} 0.0', out)
+
+    def test_age_is_computed_from_the_cached_timestamp_at_scrape_time(self):
+        clock = FakeClock(1000.0)
+        tracker = mx.QueueAgeTracker(FakeQueueApi({("abc", "1"): 940.0}), interval=60, max_lookups=5, clock=clock)
+        tracker.update_targets([("abc", "1")])
+        tracker.run_once()
+        clock.now = 1030.0
+        reg = CollectorRegistry()
+        reg.register(mx.MirthStatsCollector(FakeApi([channel("abc", "ADT Outbound", "STARTED", 5, [destination(1, "Lab", "STARTED", queued=5, sent=1, error=0)])]), "mirth-test", tracker, clock=clock))
+        out = generate_latest(reg).decode()
+        self.assertIn('destination="Lab",metaDataId="1",mirth_instance="mirth-test"} 90.0', out)
+
+    def test_age_is_absent_when_a_queued_destination_has_not_been_observed(self):
+        tracker = mx.QueueAgeTracker(FakeQueueApi({}), interval=60, max_lookups=5, clock=FakeClock(1000.0))
+        out = self.collector_output([destination(1, "Lab", "STARTED", queued=5, sent=1, error=0)], tracker)
+        self.assertNotIn("mirth_destination_oldest_queued_age_seconds{", out)
+        self.assertIn("# TYPE mirth_destination_oldest_queued_age_seconds gauge", out)
+        self.assertEqual(tracker._targets, {("abc", "1")})
+
+    def test_nothing_is_emitted_when_the_tracker_is_disabled(self):
+        out = self.collector_output([destination(1, "Lab", "STARTED", queued=0, sent=1, error=0)], None)
+        self.assertNotIn("mirth_destination_oldest_queued_age_seconds", out)
+        self.assertNotIn("mirth_queue_age_lookup_errors", out)
+
+    def test_health_series_report_errors_and_the_last_cycle(self):
+        clock = FakeClock(1000.0)
+        tracker = mx.QueueAgeTracker(FakeQueueApi({("abc", "1"): RuntimeError("x")}), interval=60, max_lookups=5, clock=clock)
+        tracker.update_targets([("abc", "1")])
+        tracker.run_once()
+        out = self.collector_output([destination(1, "Lab", "STARTED", queued=0, sent=1, error=0)], tracker)
+        self.assertIn('mirth_queue_age_lookup_errors_total{mirth_instance="mirth-test"} 1.0', out)
+        self.assertIn('mirth_queue_age_last_run_timestamp_seconds{mirth_instance="mirth-test"} 1000.0', out)
+
+
 if __name__ == "__main__":
     unittest.main()
