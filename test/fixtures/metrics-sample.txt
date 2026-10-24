@@ -1,0 +1,84 @@
+# A recorded shape of this exporter's /metrics output, enough to exercise the
+# S0-01 checks without a Mirth. Names, labels and meter types are taken from
+# mirth_exporter.py; values are illustrative.
+#
+# Two channels, chosen to cover the case §13 item 2 turns on:
+#   c1 adt-in   storage mode PRODUCTION, a destination with 7 queued messages
+#               and an oldest-message age, so the bounded lookup is exercised
+#   c2 orm-out  storage mode METADATA, which retains no destination queue, so
+#               queue age is unobtainable rather than merely missing
+#
+# Storage mode is not in the exposition — it is read from the server and passed
+# as MIRTH_STORAGE_MODES. See test/README.md.
+# HELP mirth_up 1 when the Mirth REST API answered this scrape, else 0.
+# TYPE mirth_up gauge
+mirth_up{mirth_instance="prod-1"} 1.0
+# HELP mirth_channels_observed Channels returned by /channels/statuses in this scrape.
+# TYPE mirth_channels_observed gauge
+mirth_channels_observed{mirth_instance="prod-1"} 2.0
+# HELP mirth_messages_received Cumulative messages received by the channel.
+# TYPE mirth_messages_received counter
+mirth_messages_received{mirth_instance="prod-1",channelName="adt-in",channelId="c1"} 48210.0
+mirth_messages_received{mirth_instance="prod-1",channelName="orm-out",channelId="c2"} 9120.0
+# HELP mirth_messages_sent Cumulative messages sent by the channel.
+# TYPE mirth_messages_sent counter
+mirth_messages_sent{mirth_instance="prod-1",channelName="adt-in",channelId="c1"} 48100.0
+mirth_messages_sent{mirth_instance="prod-1",channelName="orm-out",channelId="c2"} 9000.0
+# HELP mirth_messages_filtered Cumulative messages filtered by the channel.
+# TYPE mirth_messages_filtered counter
+mirth_messages_filtered{mirth_instance="prod-1",channelName="adt-in",channelId="c1"} 12.0
+mirth_messages_filtered{mirth_instance="prod-1",channelName="orm-out",channelId="c2"} 0.0
+# HELP mirth_messages_errored Cumulative messages errored in the channel.
+# TYPE mirth_messages_errored counter
+mirth_messages_errored{mirth_instance="prod-1",channelName="adt-in",channelId="c1"} 3.0
+mirth_messages_errored{mirth_instance="prod-1",channelName="orm-out",channelId="c2"} 1.0
+# HELP mirth_messages_queued Messages currently queued across the channel's destinations.
+# TYPE mirth_messages_queued gauge
+mirth_messages_queued{mirth_instance="prod-1",channelName="adt-in",channelId="c1"} 7.0
+mirth_messages_queued{mirth_instance="prod-1",channelName="orm-out",channelId="c2"} 0.0
+# HELP mirth_channel_state 1 for the channel's current deployed state.
+# TYPE mirth_channel_state gauge
+mirth_channel_state{mirth_instance="prod-1",channelName="adt-in",channelId="c1",state="STARTED"} 1.0
+mirth_channel_state{mirth_instance="prod-1",channelName="orm-out",channelId="c2",state="STARTED"} 1.0
+# HELP mirth_channel_started 1 when the channel state is STARTED.
+# TYPE mirth_channel_started gauge
+mirth_channel_started{mirth_instance="prod-1",channelName="adt-in",channelId="c1"} 1.0
+mirth_channel_started{mirth_instance="prod-1",channelName="orm-out",channelId="c2"} 1.0
+# HELP mirth_destination_messages_received Cumulative messages received by the connector.
+# TYPE mirth_destination_messages_received counter
+mirth_destination_messages_received{mirth_instance="prod-1",channelName="adt-in",channelId="c1",destination="to-epic",metaDataId="1"} 48100.0
+mirth_destination_messages_received{mirth_instance="prod-1",channelName="orm-out",channelId="c2",destination="to-lab",metaDataId="1"} 9000.0
+# HELP mirth_destination_messages_sent Cumulative messages sent by the connector.
+# TYPE mirth_destination_messages_sent counter
+mirth_destination_messages_sent{mirth_instance="prod-1",channelName="adt-in",channelId="c1",destination="to-epic",metaDataId="1"} 48093.0
+mirth_destination_messages_sent{mirth_instance="prod-1",channelName="orm-out",channelId="c2",destination="to-lab",metaDataId="1"} 9000.0
+# HELP mirth_destination_messages_filtered Cumulative messages filtered by the connector.
+# TYPE mirth_destination_messages_filtered counter
+mirth_destination_messages_filtered{mirth_instance="prod-1",channelName="adt-in",channelId="c1",destination="to-epic",metaDataId="1"} 0.0
+mirth_destination_messages_filtered{mirth_instance="prod-1",channelName="orm-out",channelId="c2",destination="to-lab",metaDataId="1"} 0.0
+# HELP mirth_destination_messages_errored Cumulative messages errored in the connector.
+# TYPE mirth_destination_messages_errored counter
+mirth_destination_messages_errored{mirth_instance="prod-1",channelName="adt-in",channelId="c1",destination="to-epic",metaDataId="1"} 2.0
+mirth_destination_messages_errored{mirth_instance="prod-1",channelName="orm-out",channelId="c2",destination="to-lab",metaDataId="1"} 0.0
+# HELP mirth_destination_messages_queued Messages currently queued on the destination connector.
+# TYPE mirth_destination_messages_queued gauge
+mirth_destination_messages_queued{mirth_instance="prod-1",channelName="adt-in",channelId="c1",destination="to-epic",metaDataId="1"} 7.0
+mirth_destination_messages_queued{mirth_instance="prod-1",channelName="orm-out",channelId="c2",destination="to-lab",metaDataId="1"} 0.0
+# HELP mirth_destination_state 1 for the connector's current state.
+# TYPE mirth_destination_state gauge
+mirth_destination_state{mirth_instance="prod-1",channelName="adt-in",channelId="c1",destination="to-epic",metaDataId="1",state="STARTED"} 1.0
+mirth_destination_state{mirth_instance="prod-1",channelName="orm-out",channelId="c2",destination="to-lab",metaDataId="1",state="STARTED"} 1.0
+# HELP mirth_destination_started 1 when the connector state is STARTED.
+# TYPE mirth_destination_started gauge
+mirth_destination_started{mirth_instance="prod-1",channelName="adt-in",channelId="c1",destination="to-epic",metaDataId="1"} 1.0
+mirth_destination_started{mirth_instance="prod-1",channelName="orm-out",channelId="c2",destination="to-lab",metaDataId="1"} 1.0
+# HELP mirth_destination_queue_enabled 1 when queuing is enabled on the destination connector.
+# TYPE mirth_destination_queue_enabled gauge
+mirth_destination_queue_enabled{mirth_instance="prod-1",channelName="adt-in",channelId="c1",destination="to-epic",metaDataId="1"} 1.0
+mirth_destination_queue_enabled{mirth_instance="prod-1",channelName="orm-out",channelId="c2",destination="to-lab",metaDataId="1"} 0.0
+# HELP mirth_destination_oldest_queued_age_seconds Age of the oldest message queued on the destination connector.
+# TYPE mirth_destination_oldest_queued_age_seconds gauge
+mirth_destination_oldest_queued_age_seconds{mirth_instance="prod-1",channelName="adt-in",channelId="c1",destination="to-epic",metaDataId="1"} 412.0
+# HELP mirth_queue_age_lookup_errors Failed queue age lookups since the exporter started.
+# TYPE mirth_queue_age_lookup_errors counter
+mirth_queue_age_lookup_errors{mirth_instance="prod-1"} 0.0

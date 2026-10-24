@@ -1,51 +1,169 @@
-# Prometheus Python Exporter for Mirth Connect
+# Prometheus exporter for Mirth Connect
 
-This Python script serves as a Prometheus exporter for Mirth Connect, allowing users to collect various metrics related to message processing and server health. Mirth Connect is an open-source integration engine that facilitates the exchange of healthcare information.
+Python exporter that reads Mirth Connect's REST API and exposes channel, destination connector and server metrics to Prometheus.
 
-## Features
-- **Metrics Collection**: Collects metrics such as messages received, sent, filtered, and errored per channel, as well as the current size of the Mirth server's storage.
-- **Server Health Monitoring**: Monitors the state of the Mirth server and reports it as either up (0) or down (1).
-- **Dynamic Configuration**: Configuration is read from a JSON file (`mirthConfig.json`), allowing users to specify the Mirth instance to monitor and authentication credentials.
+This fork reads the dashboard status endpoint (`GET /channels/statuses`) instead of the channel statistics endpoint. That gives one series per destination connector, the channel and connector deployed state, and live queue depth per destination. Cumulative message statistics are declared as Prometheus counters so `rate()` and `increase()` handle Mirth statistics resets correctly.
 
 ## Requirements
-- Python 3.x
-- `prometheus_client` library (`pip install prometheus_client`)
-- `mirthpy` library (`pip install mirthpy`)
+
+- Python 3.9 or later
+- `prometheus_client`
+- `requests`
+
+```bash
+pip install prometheus_client requests
+```
 
 ## Configuration
-The exporter requires a `mirthConfig.json` file in the same directory with the following structure:
-```json
-{
-  "instance": "MIRTH_INSTANCE_URL",
-  "username": "USERNAME",
-  "password": "PASSWORD",
-  "prometheusPort": PROMETHEUS_PORT_NUMBER
-}
+
+`mirthConfig.json` next to the script, or environment variables. Environment variables win.
+
+| JSON key | Environment variable | Default | Meaning |
+|---|---|---|---|
+| `instance` | `MIRTH_INSTANCE` | `localhost` | Mirth host. `localhost` becomes `host.docker.internal` inside a container. |
+| `mirthPort` | `MIRTH_PORT` | `8443` | Mirth HTTPS port. |
+| `username` | `MIRTH_USERNAME` | `admin` | API user. Needs permission to view the dashboard and system stats. |
+| `password` | `MIRTH_PASSWORD` | `admin` | API password. |
+| `prometheusPort` | `PROMETHEUS_PORT` | `9001` | Port the exporter listens on. |
+| `verifyTls` | `MIRTH_VERIFY_TLS` | `false` | Verify Mirth's certificate. Mirth ships self-signed. |
+| `includeUndeployed` | `MIRTH_INCLUDE_UNDEPLOYED` | `true` | Also report channels that are not deployed. |
+| `timeoutSeconds` | `MIRTH_TIMEOUT_SECONDS` | `10` | HTTP timeout per API call. |
+| `queueAgeEnabled` | `MIRTH_QUEUE_AGE_ENABLED` | `true` | Look up the oldest queued message per destination in a background task. |
+| `queueAgeIntervalSeconds` | `MIRTH_QUEUE_AGE_INTERVAL_SECONDS` | `60` | Pause between queue age cycles. An answer older than three intervals is treated as unknown. |
+| `queueAgeMaxLookupsPerCycle` | `MIRTH_QUEUE_AGE_MAX_LOOKUPS` | `25` | Most destinations looked up in one cycle. |
+
+The exporter logs in once and reuses the session cookie. It logs in again on a 401.
+
+## Running
+
+```bash
+python mirth_exporter.py
 ```
 
-To specify a certain port to point at for Mirth, you can add `mirthPort` in the `mirthConfig.json` file. (Mirth's default port is 8443)
-```json
-{
-  "instance": "MIRTH_INSTANCE_URL",
-  "username": "USERNAME",
-  "password": "PASSWORD",
-  "mirthPort": MIRTH_PORT_NUMBER,
-  "prometheusPort": PROMETHEUS_PORT_NUMBER
-}
+Or in Docker:
+
+```bash
+docker build -t mirth-exporter .
+docker run -p 9001:9001 -e MIRTH_INSTANCE=hl7-engine -e MIRTH_USERNAME=admin -e MIRTH_PASSWORD=admin mirth-exporter
 ```
+
+A Prometheus scrape config for the Fethr compose stack is in `prometheus/prometheus.yml`. It also scrapes the Kestra orchestrator on its management port.
 
 ## Metrics
-- **mirth_messages_received_total**: Number of messages received per channel.
-- **mirth_messages_sent_total**: Number of messages sent per channel.
-- **mirth_messages_filtered_total**: Number of messages filtered per channel.
-- **mirth_messages_queued**: Number of messages currently queued per channel.
-- **mirth_messages_errored_total**: Number of messages that encountered errors per channel.
-- **mirth_server_size**: Size of the Mirth server's storage in bytes.
-- **mirth_server_state**: State of the Mirth server (0 for up, 1 for down).
-## Usage
-1. Configure mirthConfig.json with the appropriate values.
-2. Run the script (python mirth_exporter.py).
-3. Access the metrics via Prometheus at the specified port (http://localhost:{prometheusPort} by default).
 
-## Important Note
-Ensure that the Mirth Connect server is reachable from the machine running the exporter, and the specified credentials have appropriate permissions for accessing Mirth's APIs.
+All series carry `mirth_instance` (the Mirth host as configured). It is deliberately not called `instance`: Prometheus owns that label for the scrape target and, without `honor_labels`, renames a clashing exporter label to `exported_instance`. Anything written against the old `instance` or `exported_instance` label on these series needs to use `mirth_instance` now.
+
+### Channel level
+
+Labels: `channelName`, `channelId`. Names are unchanged from the upstream exporter so the bundled Grafana dashboard keeps working.
+
+| Metric | Type | Meaning |
+|---|---|---|
+| `mirth_messages_received_total` | counter | Messages received by the channel since its statistics were last reset. |
+| `mirth_messages_sent_total` | counter | Messages sent by the channel. |
+| `mirth_messages_filtered_total` | counter | Messages filtered by the channel. |
+| `mirth_messages_errored_total` | counter | Messages that errored in the channel. |
+| `mirth_messages_queued` | gauge | Messages currently queued across the channel's destinations. |
+| `mirth_channel_state` | gauge | One series per Mirth deployed state with label `state`; 1 for the current state. |
+| `mirth_channel_started` | gauge | 1 when the channel state is `STARTED`. |
+
+### Destination connector level
+
+Labels: `channelName`, `channelId`, `destination` (connector name), `metaDataId` (connector number as Mirth assigns it; the source connector is `0` if Mirth reports it).
+
+| Metric | Type | Meaning |
+|---|---|---|
+| `mirth_destination_messages_received_total` | counter | Messages received by the connector. |
+| `mirth_destination_messages_sent_total` | counter | Messages sent by the connector. |
+| `mirth_destination_messages_filtered_total` | counter | Messages filtered by the connector. |
+| `mirth_destination_messages_errored_total` | counter | Messages that errored in the connector. |
+| `mirth_destination_messages_queued` | gauge | Messages currently queued on this connector. |
+| `mirth_destination_state` | gauge | One series per state with label `state`; 1 for the current state. |
+| `mirth_destination_started` | gauge | 1 when the connector state is `STARTED`. |
+| `mirth_destination_queue_enabled` | gauge | 1 when queuing is enabled on the connector. |
+| `mirth_destination_oldest_queued_age_seconds` | gauge | Age of the oldest message queued on this connector. 0 when the dashboard shows an empty queue. Absent when the age has not been observed. |
+
+### Server and scrape health
+
+| Metric | Type | Meaning |
+|---|---|---|
+| `mirth_up` | gauge | 1 when the Mirth API answered this scrape. |
+| `mirth_server_state` | gauge | Legacy: 0 up, 1 down. Prefer `mirth_up`. |
+| `mirth_scrape_success` | gauge | 1 when every API call in the scrape succeeded. |
+| `mirth_scrape_duration_seconds` | gauge | Wall time of the scrape. |
+| `mirth_channels_observed` | gauge | Channels returned by the status call. |
+| `mirth_queue_age_lookup_errors_total` | counter | Failed queue age lookups since the exporter started. Present when the queue age task is enabled. |
+| `mirth_queue_age_last_run_timestamp_seconds` | gauge | Unix time the queue age task last finished a cycle. Absent until the first cycle. |
+| `mirth_server_size` | gauge | Disk used on the Mirth volume, bytes. |
+| `mirth_server_disk_free_bytes` | gauge | Disk free on the Mirth volume, bytes. |
+| `mirth_server_heap_used_bytes` | gauge | JVM heap allocated minus free, bytes. |
+| `mirth_server_cpu_usage_percent` | gauge | CPU usage as reported by Mirth. |
+
+## Unknown is not zero
+
+When Mirth cannot be reached the exporter emits `mirth_up 0` and nothing else. It never writes a zero for a channel or destination it did not observe, and it omits a counter when Mirth did not return that statistic. Dashboards and alert rules must treat a missing series as unknown:
+
+```promql
+# channel data is missing while Mirth itself is up
+mirth_up == 1 and absent(mirth_messages_queued{channelId="..."})
+
+# exporter or Mirth is down
+up{job="mirth"} == 0 or mirth_up == 0
+```
+
+A Grafana stat panel should set its "No value" display to `UNKNOWN`, not `0`.
+
+## Capability matrix
+
+What this exporter can and cannot get from the Mirth REST API. Rows marked unsupported were tried against the API and either do not exist in the dashboard status payload or need a different, heavier call that this exporter deliberately does not make.
+
+| Capability | Status | Source | Notes |
+|---|---|---|---|
+| Received, sent, filtered, errored per channel | supported | `/channels/statuses` `statistics` | Cumulative since last statistics reset. |
+| Received, sent, filtered, errored per destination | supported | `childStatuses[].statistics` | One series per connector. |
+| Queue depth per channel | supported | `DashboardStatus.queued` | Live gauge, not a cumulative counter. |
+| Queue depth per destination | supported | `childStatuses[].queued` | Live gauge. |
+| Channel deployed state | supported | `DashboardStatus.state` | `STARTED`, `STOPPED`, `PAUSED`, `UNDEPLOYED` and the transitional states. |
+| Destination connector state | supported | `childStatuses[].state` | Same enum. |
+| Queue enabled flag per destination | supported | `childStatuses[].queueEnabled` | |
+| Undeployed channels | supported | `includeUndeployed=true` | Reported with state `UNDEPLOYED` and no statistics. |
+| Server disk, heap, CPU | supported | `/system/stats` | Point-in-time values. |
+| Statistics reset detection | supported | counter type | Prometheus counter semantics; a reset shows as a counter reset, never a negative rate. |
+| Lifetime statistics | unsupported | `lifetimeStatistics` exists in the payload | Not emitted. Would double the series count for values the current counters already cover. Add if a dashboard needs since-creation totals. |
+| Oldest queued message age per destination | supported (bounded, approximate) | `GET /channels/{id}/messages/count` and `GET /channels/{id}/messages` filtered by `status=QUEUED` and `includedMetaDataId` | Looked up by a background task, only for destinations whose dashboard queue is above zero, at most `queueAgeMaxLookupsPerCycle` per cycle, and never during a scrape. See "Queue age" below. |
+| Last message received timestamp | unsupported | not in `/channels/statuses` | Needs `/channels/{id}/messages` with `limit=1`, one call per channel per scrape. The Fethr orchestrator already does this on demand; a 15-second poll across an estate is too expensive. |
+| Last successful delivery timestamp | unsupported | not in `/channels/statuses` | Same message-search cost, and the latest stored message is not necessarily the last successful downstream delivery. |
+| Message processing latency | unsupported | not in `/channels/statuses` | Only derivable per message from `connectorMessages` timestamps. |
+| Error detail or response text | unsupported | not in `/channels/statuses` | Message content is deliberately excluded from monitoring queries. |
+| Channel-level alerts configured in Mirth | unsupported | `/alerts` | Different endpoint, not a metric. |
+| Multiple Mirth servers | unsupported | | One Mirth per exporter process. Run one container per server and distinguish by `instance`. |
+| Tenant or environment labels | unsupported | | Mirth has no tenant concept. Add `external_labels` or relabeling in Prometheus. |
+
+## Tests
+
+```bash
+python -m unittest test_mirth_exporter
+```
+
+The tests use Jettison-shaped fixtures and a fake API, so they run without a Mirth server.
+
+## Queue age
+
+`mirth_destination_oldest_queued_age_seconds` is built from two things: the live queue depth that the scrape already reads, and a background lookup of the oldest queued message.
+
+How it works:
+
+- Each scrape records which destinations have a queue above zero. A background thread asks Mirth for the oldest message of those destinations, at most `queueAgeMaxLookupsPerCycle` per cycle, the ones observed longest ago first. A scrape never waits for a lookup.
+- Mirth returns search results newest first, so the oldest message is the last row. The lookup counts the `QUEUED` messages of the destination and then fetches only the row at `offset = count - 1` with `limit = 1` and `includeContent=false`. No message content is read.
+- The result is stored as a timestamp, and the age is computed at scrape time, so it keeps growing correctly between lookups.
+- The age is `0` when the dashboard shows an empty queue. It is absent (unknown) when the queue is above zero and no fresh answer exists: before the first lookup, after a failed lookup, or when the answer is older than three intervals. Absent never means zero.
+
+Limits:
+
+- The age is approximate. Messages that arrive or drain between the count and the fetch move the row by a few places.
+- The age uses the received date of the destination's connector message, falling back to the message's received date. It is compared with the exporter host's clock, so both clocks must be in sync.
+- Lookups share the Mirth session with the scrape, so a slow lookup can delay a scrape by up to one request timeout.
+- Pruned or never-stored messages cannot be found. A channel whose message storage is `DISABLED` has no messages to search, so its age stays absent. Mirth deploys a channel with queueing enabled only when its storage settings support queueing.
+- Last delivery is not collected here. The alerting design derives it from hourly rollups of the delivered counters instead, because Mirth prunes `SENT` messages.
+- The request and response shapes follow the Mirth 4.5 source and the way the Fethr orchestrator already parses messages. They have been tested only against fixtures here and still need to be confirmed against a running Mirth 4.5.2.
+
