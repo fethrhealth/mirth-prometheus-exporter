@@ -1,0 +1,67 @@
+name: Publish docker
+
+# Mirrors orchestration-engine's release-docker.yml conventions (push publishes,
+# pull_request builds without pushing, ghcr.io/fethrhealth/<name> naming,
+# packages: write for GITHUB_TOKEN-based ghcr auth) — but through the standard
+# docker/build-push-action rather than orchestration-engine's own
+# fethrhealth/kestra-actions reusable workflows, which are Kestra-specific and
+# do not apply here. Publishing ghcr.io/fethrhealth/mirth-exporter from here
+# is also what interoperability-stack's QA compose file (MIRTH_EXPORTER_TAG)
+# has been waiting on — it builds locally from a sibling checkout for dev, but
+# the QA host has none, so it needs a real published image.
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "**.md"
+  pull_request:
+    paths-ignore:
+      - "**.md"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write # ghcr.io push via GITHUB_TOKEN
+
+env:
+  IMAGE: ghcr.io/fethrhealth/mirth-exporter
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        if: github.event_name == 'push'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=sha,format=long
+            type=ref,event=branch
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: dockerfile
+          # A pull_request run still builds the image (catches a broken
+          # Dockerfile before merge) but never pushes — the docker/login-action
+          # step above is skipped for pull_request, so an unauthenticated push
+          # would just fail regardless.
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
