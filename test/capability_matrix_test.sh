@@ -122,7 +122,11 @@ for cid in sorted(channels):
             continue
         metrics = []
         for metric in DESTINATION_METRICS:
-            if dest_seen.get((cid, mid, metric)):
+            if dest_seen.get((cid, mid, metric)) and metric == QUEUE_AGE and mode == "UNKNOWN":
+                # Observed, but the storage mode that would make it meaningful is not known:
+                # claim nothing until the owner supplies the mode.
+                status = "unverified"
+            elif dest_seen.get((cid, mid, metric)):
                 status = "available"
             elif metric == QUEUE_AGE and mode not in QUEUE_AGE_MODES and mode != "UNKNOWN":
                 # Not a gap to chase: this storage mode cannot retain the queue.
