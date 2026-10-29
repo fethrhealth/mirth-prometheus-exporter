@@ -29,7 +29,9 @@ import re, sys
 scrape_path = sys.argv[1]
 text = open(scrape_path, encoding="utf-8").read()
 
-# Totals that reset when statistics are cleared. Each must be a counter.
+# Totals that reset when statistics are cleared. Each must be a counter. Prometheus
+# names a counter's family without the _total suffix and declares its TYPE with it,
+# so each name is looked up as exposed (<name>_total) first, then as given.
 MUST_BE_COUNTER = [
     "mirth_messages_received", "mirth_messages_sent",
     "mirth_messages_filtered", "mirth_messages_errored",
@@ -42,7 +44,8 @@ declared = dict(re.findall(r"^# TYPE (\S+) (\S+)$", text, re.M))
 failures = []
 
 for metric in MUST_BE_COUNTER:
-    kind = declared.get(metric)
+    exposed = metric + "_total" if metric + "_total" in declared else metric
+    kind = declared.get(exposed)
     if kind is None:
         failures.append("%s is not exported at all — a reset-prone total that Prometheus "
                         "cannot see cannot be rate()d safely" % metric)
