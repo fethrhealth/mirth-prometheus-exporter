@@ -43,6 +43,11 @@ jobs:
       # the module rather than restated here, where it would drift the first
       # time __version__ changes. Parsed, not imported: the runner has none of
       # the exporter's dependencies installed.
+      #
+      # The version alone does not say which build produced the image: every
+      # push to main while `__version__` is unchanged republishes that tag
+      # over the previous build. The Actions run number is appended below so
+      # each build also keeps a tag of its own.
       - name: Read the exporter version
         id: version
         run: |
@@ -64,8 +69,15 @@ jobs:
         id: meta
         with:
           images: ${{ env.IMAGE }}
+          # `<version>-ci.<run number>` is the one tag that identifies a
+          # single build: the run it names is the Actions run that built the
+          # image, and that run records the commit it checked out, so the
+          # image leads back to a sha even once the bare version tag has
+          # moved on. Run number, not run id, because that is the number the
+          # Actions UI shows against the run.
           tags: |
             type=raw,value=${{ steps.version.outputs.version }}
+            type=raw,value=${{ steps.version.outputs.version }}-ci.${{ github.run_number }}
             type=sha,format=long
             type=ref,event=branch
             type=raw,value=latest,enable={{is_default_branch}}
