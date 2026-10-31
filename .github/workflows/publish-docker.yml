@@ -45,9 +45,9 @@ jobs:
       # the exporter's dependencies installed.
       #
       # The version alone does not say which build produced the image: every
-      # push to main while `__version__` is unchanged republishes that tag
-      # over the previous build. The Actions run number is appended below so
-      # each build also keeps a tag of its own.
+      # push to main while `__version__` is unchanged would republish that
+      # tag over the previous build. The Actions run number is appended below
+      # so each build keeps a tag of its own.
       - name: Read the exporter version
         id: version
         run: |
@@ -69,18 +69,20 @@ jobs:
         id: meta
         with:
           images: ${{ env.IMAGE }}
-          # `<version>-ci.<run number>` is the one tag that identifies a
-          # single build: the run it names is the Actions run that built the
-          # image, and that run records the commit it checked out, so the
-          # image leads back to a sha even once the bare version tag has
-          # moved on. Run number, not run id, because that is the number the
-          # Actions UI shows against the run.
+          # One tag, `<version>-<run number>`: the version says what is
+          # inside the image, the Actions run number says which build
+          # produced it, and that run records the commit it checked out, so
+          # the image leads back to a sha. Run number, not run id, because
+          # that is the number the Actions UI shows against the run.
+          #
+          # It is the only tag published. The moving tags this workflow used
+          # to write — the bare version, `sha-<commit>`, the branch name and
+          # `latest` — are gone, so nothing can pull a tag that silently
+          # points at a different build than it did yesterday. Anything that
+          # referred to one, interoperability-stack's QA compose file
+          # (MIRTH_EXPORTER_TAG) included, now names a build explicitly.
           tags: |
-            type=raw,value=${{ steps.version.outputs.version }}
-            type=raw,value=${{ steps.version.outputs.version }}-ci.${{ github.run_number }}
-            type=sha,format=long
-            type=ref,event=branch
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ steps.version.outputs.version }}-${{ github.run_number }}
 
       - uses: docker/build-push-action@v6
         with:
