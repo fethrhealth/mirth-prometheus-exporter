@@ -2,7 +2,19 @@ FROM python:3.12-slim
 LABEL MAINTAINER="clayton.feathers"
 
 WORKDIR /app
-RUN pip install --no-cache-dir prometheus_client requests
+
+# The runtime dependencies come from pyproject.toml's [project].dependencies
+# rather than being restated here, so the image and the Python artifact can
+# never install different sets. Only the *version* in that file is dynamic
+# (read from mirth_exporter.__version__), so this needs the metadata alone —
+# no source, no build backend — and the layer still rebuilds only when
+# pyproject.toml itself changes, not on every edit to the exporter.
+COPY pyproject.toml ./
+RUN python -c "import tomllib, pathlib; \
+      print('\n'.join(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['dependencies']))" \
+      > /tmp/requirements.txt \
+    && pip install --no-cache-dir -r /tmp/requirements.txt \
+    && rm /tmp/requirements.txt
 
 # Runs as a fixed non-root uid rather than root: the exporter only ever makes
 # outbound HTTPS calls to Mirth and serves its own /metrics, neither of which

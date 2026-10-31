@@ -16,6 +16,12 @@ because Prometheus owns ``instance`` and would rename ours to ``exported_instanc
 unless the scrape job sets ``honor_labels``.
 """
 
+# The single source of truth for the exporter's version. pyproject.toml reads
+# this attribute rather than carrying its own copy, and the publish workflow
+# reads it from here to tag the image, so a released image, the sdist/wheel and
+# the running process can never disagree about which build they are.
+__version__ = "0.1.0"
+
 import json
 import logging
 import os
