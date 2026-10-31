@@ -54,10 +54,9 @@ Mirth reports it only in `/opt/connect/logs/mirth.log`, never in the API
 response. That contradiction is the same one slot 2 checks for, arriving from
 the server instead.
 
-### A known contradiction when the modes are supplied
+### Queue age is absent where there is no queue
 
-With `MIRTH_STORAGE_MODES` set for these two channels, `validate-matrix.sh`
-fails:
+Supplying the modes used to fail slot 2:
 
 ```
 FAIL contradiction: destination qa-s0-01-metadata/To MLLP claims
@@ -65,17 +64,25 @@ mirth_destination_oldest_queued_age_seconds available, but the channel's
 storage mode METADATA cannot retain a destination queue
 ```
 
-It is right to. The exporter publishes
-`mirth_destination_oldest_queued_age_seconds 0.0` for every destination,
-including ones whose storage mode cannot hold a queue, and a `0` there reads as
-"the queue is empty" rather than "there is no queue". The metric's own help text
-says it is *absent when not observed*, so absence is how that should be said.
-Fixing it means changing `mirth_exporter.py`, which is a change to what the
-exporter publishes and is not part of this fixture.
+The exporter published `mirth_destination_oldest_queued_age_seconds 0.0` for
+every destination, including ones whose storage mode cannot hold a queue, and a
+`0` there says "the queue is empty" rather than "there is no queue" — a rule
+reading it cannot tell a drained queue from one that cannot exist. It now
+publishes the series only for a destination whose `queueEnabled` is true, which
+is what the family's "absent when not observed" already promised.
 
-Left unset — which is how `control/bin/regress` runs the closure, and how S0-01
-was accepted — both channels record `UNKNOWN`, that verdict is suppressed, and
-slot 2 passes with four capability gaps recorded.
+With the modes supplied the three destinations without a queue are reported as
+gaps rather than as a contradiction, and only the one real queue carries an age:
+
+```
+3 capability gap(s) recorded — findings about the deployment, not failures:
+  - qa-s0-01-metadata/Source:  unavailable_by_storage_mode (storage mode METADATA)
+  - qa-s0-01-metadata/To MLLP: unavailable_by_storage_mode (storage mode METADATA)
+  - qa-s0-01-production/Source: absent (storage mode PRODUCTION)
+```
+
+Supply the modes. Left unset everything degrades to `UNKNOWN`, which suppresses
+the storage-mode verdict and hides exactly this kind of disagreement.
 
 ## Storage modes are an input, not an observation
 
