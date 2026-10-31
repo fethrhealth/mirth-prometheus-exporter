@@ -23,7 +23,13 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Pull request runs are superseded by the next push to the branch, so
+  # cancelling one costs nothing. A run that publishes is not: cancelling it
+  # loses the image for that commit, and the build number it would have
+  # carried is never reissued. This already happened — a manual run started
+  # moments after a merge cancelled the merge's own publish (run #13), so
+  # main's image was never pushed.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -31,6 +37,10 @@ permissions:
 
 env:
   IMAGE: ghcr.io/fethrhealth/mirth-exporter
+  # A run publishes when it is not a pull request and it is on the default
+  # branch — so a push to main and a manual run on main both publish, and a
+  # manual run on a side branch does not.
+  PUBLISH: ${{ github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch }}
 
 jobs:
   build-and-push:
@@ -58,8 +68,13 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+      # Publishing is every run that is not a pull request: a push to main and
+      # a manual run of this workflow on main both produce an image worth
+      # keeping. `github.event_name == 'push'` alone silently turned a
+      # workflow_dispatch run into a build-only run — run #17 looked green,
+      # logged the tag it would have used, and published nothing.
       - uses: docker/login-action@v3
-        if: github.event_name == 'push'
+        if: env.PUBLISH == 'true'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -92,6 +107,6 @@ jobs:
           # Dockerfile before merge) but never pushes — the docker/login-action
           # step above is skipped for pull_request, so an unauthenticated push
           # would just fail regardless.
-          push: ${{ github.event_name == 'push' }}
+          push: ${{ env.PUBLISH == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
