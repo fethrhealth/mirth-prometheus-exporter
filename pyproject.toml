@@ -1,0 +1,29 @@
+# Standard Python packaging metadata for the exporter. The exporter ships as a
+# container image rather than as a wheel on an index, but the version it is
+# released under is managed the way any Python artifact's is: declared once, in
+# mirth_exporter.__version__, and read from there by everything that needs it
+# (`python -m build`, and the publish-docker workflow's image tag).
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mirth-prometheus-exporter"
+description = "Prometheus exporter for Mirth Connect"
+readme = "README.md"
+requires-python = ">=3.12" # matches the python:3.12-slim base image
+dynamic = ["version"]
+dependencies = [
+    "prometheus_client",
+    "requests",
+    "urllib3", # imported directly, not only via requests
+]
+
+[project.scripts]
+mirth-exporter = "mirth_exporter:main"
+
+[tool.setuptools]
+py-modules = ["mirth_exporter"]
+
+[tool.setuptools.dynamic]
+version = { attr = "mirth_exporter.__version__" }
