@@ -84,7 +84,10 @@ for key, depth in sorted(with_queue.items()):
     else:
         print("    %s: %d queued, oldest %.0fs" % (label, int(depth), age))
 
-errors = re.search(r"^mirth_queue_age_lookup_errors(?:\{[^}]*\})?\s+([0-9.eE+-]+)\s*$", text, re.M)
+# _total because prometheus_client suffixes a counter's sample names; the bare
+# spelling is accepted too so the note survives either exposition.
+errors = re.search(r"^mirth_queue_age_lookup_errors(?:_total)?(?:\{[^}]*\})?\s+([0-9.eE+-]+)\s*$",
+                   text, re.M)
 if errors and float(errors.group(1)) > 0:
     print("  note: mirth_queue_age_lookup_errors is %s — the lookup has failed before"
           % errors.group(1))
