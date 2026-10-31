@@ -270,7 +270,10 @@ class QueueAgeTracker:
 
     def run_once(self) -> None:
         with self._lock:
-            order = sorted(self._targets, key=lambda k: self._oldest.get(k, (0.0, 0.0))[1])
+            # _targets is a set, so ties must be broken on the key itself: every destination
+            # never looked up sorts at 0.0, and without the tie-break which of them a cycle
+            # picks follows set iteration order, which varies per process with the hash seed.
+            order = sorted(self._targets, key=lambda k: (self._oldest.get(k, (0.0, 0.0))[1], k))
         for key in order[: self.max_lookups]:
             try:
                 received = self.api.oldest_queued_received(*key)
@@ -336,7 +339,7 @@ class MirthStatsCollector:
         dst_started = GaugeMetricFamily("mirth_destination_started", "1 when the connector state is STARTED.", labels=dst_labels)
         dst_queue_enabled = GaugeMetricFamily("mirth_destination_queue_enabled", "1 when queuing is enabled on the destination connector.", labels=dst_labels)
 
-        dst_queue_age = GaugeMetricFamily("mirth_destination_oldest_queued_age_seconds", "Age of the oldest message queued on the destination connector, 0 when its queue is empty. Absent when not observed.", labels=dst_labels)
+        dst_queue_age = GaugeMetricFamily("mirth_destination_oldest_queued_age_seconds", "Age of the oldest message queued on the destination connector, 0 when its queue is empty. Absent when not observed, including when the destination has queuing disabled.", labels=dst_labels)
         qa_errors = CounterMetricFamily("mirth_queue_age_lookup_errors", "Failed queue age lookups since the exporter started.", labels=["mirth_instance"])
         qa_last_run = GaugeMetricFamily("mirth_queue_age_last_run_timestamp_seconds", "Unix time the queue age task last finished a cycle.", labels=["mirth_instance"])
         disk_used = GaugeMetricFamily("mirth_server_size", "Disk used on the Mirth server volume, in bytes.", labels=["mirth_instance"])
@@ -427,17 +430,26 @@ class MirthStatsCollector:
             cqueued = to_int(child.get("queued"))
             if cqueued is not None:
                 dst_queued.add_metric(dlabels, cqueued)
+            raw_queue_enabled = child.get("queueEnabled")
+            queue_enabled = None if raw_queue_enabled is None else str(raw_queue_enabled).lower() == "true"
             if queue_age is not None and cqueued is not None:
-                self._emit_queue_age(queue_age, dlabels, (cid, meta), cqueued, queued_targets)
+                self._emit_queue_age(queue_age, dlabels, (cid, meta), cqueued, queued_targets, queue_enabled)
             cstate = str(child.get("state", "UNKNOWN"))
             for s in CHANNEL_STATES:
                 dst_state.add_metric(dlabels + [s], 1 if s == cstate else 0)
             dst_started.add_metric(dlabels, 1 if cstate == "STARTED" else 0)
-            if child.get("queueEnabled") is not None:
-                dst_queue_enabled.add_metric(dlabels, 1 if str(child["queueEnabled"]).lower() == "true" else 0)
+            if queue_enabled is not None:
+                dst_queue_enabled.add_metric(dlabels, 1 if queue_enabled else 0)
 
     def _emit_queue_age(self, family: Any, dlabels: List[str], key: Tuple[str, str], queued: int,
-                        targets: Optional[List[Tuple[str, str]]]) -> None:
+                        targets: Optional[List[Tuple[str, str]]],
+                        queue_enabled: Optional[bool]) -> None:
+        # A destination with queuing off holds no queue, and one whose flag the server
+        # does not report holds an unknown one. Publishing 0 for either says "the queue
+        # is empty", which is a different claim: a rule reading it cannot tell a drained
+        # queue from one that cannot exist. Absence is how this family says not observed.
+        if not queue_enabled:
+            return
         if queued <= 0:
             family.add_metric(dlabels, 0.0)
             return
