@@ -50,6 +50,24 @@ DESTINATION_METRICS = ["mirth_destination_messages_received", "mirth_destination
 QUEUE_AGE_MODES = {"DEVELOPMENT", "PRODUCTION"}
 QUEUE_AGE = "mirth_destination_oldest_queued_age_seconds"
 
+KNOWN_METRICS = set(CHANNEL_METRICS) | set(DESTINATION_METRICS)
+
+
+def canonical(name):
+    """The family name a metric is keyed by here, given the name on the wire.
+
+    prometheus_client suffixes a counter's samples with _total, so the family the
+    exporter builds as mirth_messages_received arrives as
+    mirth_messages_received_total. The matrix keys metrics by the un-suffixed name
+    because contracts/capability-matrix.v1.json is frozen on those, so resolve the
+    wire name back to it once, here, rather than at every comparison below.
+    """
+    if name not in KNOWN_METRICS and name.endswith("_total"):
+        base = name[: -len("_total")]
+        if base in KNOWN_METRICS:
+            return base
+    return name
+
 storage_modes = {}
 for pair in modes_arg.split(","):
     if "=" in pair:
@@ -82,6 +100,7 @@ for line in open(scrape_path, encoding="utf-8"):
     name, lbl, _value = m.group(1), labels_of(m.group(2)), m.group(3)
     if not name.startswith("mirth_"):
         continue
+    name = canonical(name)
     instance = instance or lbl.get("mirth_instance")
     cid = lbl.get("channelId")
     if cid is None:
