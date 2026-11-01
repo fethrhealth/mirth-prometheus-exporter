@@ -1,7 +1,7 @@
 <channel version="4.5.2">
   <id>aec99d5b-6d9e-4e0d-a1ef-565504150ae3</id>
   <nextMetaDataId>2</nextMetaDataId>
-  <name>qa-s0-01-metadata</name>
+  <name>qa-s0-01-unqueued</name>
   <description></description>
   <revision>2</revision>
   <sourceConnector version="4.5.2">
@@ -326,7 +326,7 @@
   <undeployScript>return;</undeployScript>
   <properties version="4.5.2">
     <clearGlobalChannelMap>true</clearGlobalChannelMap>
-    <messageStorageMode>METADATA</messageStorageMode>
+    <messageStorageMode>PRODUCTION</messageStorageMode>
     <encryptData>false</encryptData>
     <encryptAttachments>false</encryptAttachments>
     <encryptCustomMetaData>false</encryptCustomMetaData>
