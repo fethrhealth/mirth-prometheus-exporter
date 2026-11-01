@@ -52,6 +52,14 @@ described the deployment wrongly and recorded gaps that were an artefact of the
 fixture rather than findings about the server. Its id is unchanged, so the deploy
 script renames the existing channel instead of leaving an orphan beside a new one.
 
+This is not only a convention. §13 item 2 records that channels the orchestration
+engine creates are stamped with one instance-wide default, `PRODUCTION`
+(`MirthConfig.messageStorageMode`, substituted into the MLLP templates as
+`__MESSAGE_STORAGE_MODE__`), and that `ChannelRule` refuses to deploy a queueing
+channel whose mode cannot keep that queue — so for engine-created channels queue
+age is available by construction. A METADATA channel here could only ever be one
+this fixture put there.
+
 The rule it used to exercise is unchanged and still enforced. It does not need a
 METADATA channel, because the storage mode is an input rather than an
 observation — name one and the verdict appears:
