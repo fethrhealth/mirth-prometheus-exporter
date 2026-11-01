@@ -7,10 +7,13 @@
 # Environment:
 #   MIRTH_EXPORTER_URL       default http://localhost:9001
 #   MIRTH_CAPABILITY_MATRIX  where to write, default build/S0-01/capability-matrix.json
-#   MIRTH_STORAGE_MODES      optional "channelId=PRODUCTION,otherId=METADATA".
-#                            A channel not listed is recorded UNKNOWN, which is a
-#                            legitimate answer — §13 item 2 settled that storage
-#                            mode is read from the server, never assumed.
+#   MIRTH_STORAGE_MODES      optional "channelId=METADATA,otherId=DISABLED", naming
+#                            only the channels that depart from the deployment's
+#                            guarantee. Every Mirth channel this stack deploys is
+#                            PRODUCTION, so that is what an unlisted channel is
+#                            recorded as.
+#   MIRTH_DEFAULT_STORAGE_MODE  the mode for an unlisted channel, default PRODUCTION.
+#                            Set it to UNKNOWN to go back to claiming nothing.
 #
 # Asserts coverage only: every sampled channel reaches the matrix with a status
 # for each metric. Whether a metric is available is a finding about the
@@ -33,10 +36,12 @@ if ! curl --silent --show-error --fail --max-time 30 "${endpoint}" > "${scrape}"
     exit 1
 fi
 
-python3 -I - "${scrape}" "${matrix}" "${endpoint}" "${MIRTH_STORAGE_MODES:-}" <<'PY'
+python3 -I - "${scrape}" "${matrix}" "${endpoint}" "${MIRTH_STORAGE_MODES:-}" \
+    "${MIRTH_DEFAULT_STORAGE_MODE:-PRODUCTION}" <<'PY'
 import datetime, json, os, re, sys
 
-scrape_path, matrix_path, endpoint, modes_arg = sys.argv[1:5]
+scrape_path, matrix_path, endpoint, modes_arg, default_mode = sys.argv[1:6]
+default_mode = default_mode.strip().upper() or "PRODUCTION"
 
 CHANNEL_METRICS = ["mirth_messages_received", "mirth_messages_sent",
                    "mirth_messages_filtered", "mirth_messages_errored",
@@ -124,7 +129,7 @@ for line in open(scrape_path, encoding="utf-8"):
 
 out_channels = []
 for cid in sorted(channels):
-    mode = storage_modes.get(cid, "UNKNOWN")
+    mode = storage_modes.get(cid, default_mode)
     entry = {
         "channel_id": cid,
         "channel_name": channels[cid]["channel_name"],
