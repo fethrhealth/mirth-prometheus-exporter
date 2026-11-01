@@ -35,14 +35,45 @@ test/deploy-channels.sh
 ```
 
 creates and deploys the two sampled channels from `test/channels/*.xml`:
-`qa-s0-01-production` (`PRODUCTION` storage, destination queueing on) and
-`qa-s0-01-metadata` (`METADATA`, queueing off). They differ in exactly the
-property the matrix reports on, which is why there are two. The script is
-idempotent — the channel ids are fixed in the XML, so a re-run updates them in
-place — and it polls `/channels/statuses` rather than trusting the deploy
-call, which returns 204 for a channel that then fails to start.
+`qa-s0-01-production` (destination queueing on) and `qa-s0-01-unqueued`
+(queueing off). Both are `PRODUCTION` storage, so they differ in exactly one
+property — whether a destination keeps a queue — which is why there are two. The
+script is idempotent: the channel ids are fixed in the XML, so a re-run updates
+them in place and redeploys them. It polls `/channels/statuses` rather than
+trusting the deploy call, which returns 204 for a channel that then fails to
+start.
 
-`METADATA` with destination queueing enabled is one such failure:
+### No channel here is METADATA
+
+`qa-s0-01-unqueued` was `qa-s0-01-metadata`, a `METADATA` channel deployed so the
+`unavailable_by_storage_mode` verdict had a live subject. It was retired: every
+channel on this deployment is `PRODUCTION`, so a fixture claiming otherwise
+described the deployment wrongly and recorded gaps that were an artefact of the
+fixture rather than findings about the server. Its id is unchanged, so the deploy
+script renames the existing channel instead of leaving an orphan beside a new one.
+
+This is not only a convention. §13 item 2 records that channels the orchestration
+engine creates are stamped with one instance-wide default, `PRODUCTION`
+(`MirthConfig.messageStorageMode`, substituted into the MLLP templates as
+`__MESSAGE_STORAGE_MODE__`), and that `ChannelRule` refuses to deploy a queueing
+channel whose mode cannot keep that queue — so for engine-created channels queue
+age is available by construction. A METADATA channel here could only ever be one
+this fixture put there.
+
+The rule it used to exercise is unchanged and still enforced. It does not need a
+METADATA channel, because the storage mode is an input rather than an
+observation — name one and the verdict appears:
+
+```bash
+MIRTH_STORAGE_MODES="aec99d5b-6d9e-4e0d-a1ef-565504150ae3=METADATA" \
+  test/capability_matrix_test.sh
+```
+
+That is the honest way to exercise it now: assert what the code does with a mode,
+without asserting that the server has a channel in it.
+
+Deploying a `METADATA` channel whose destination has queueing enabled is refused
+by Mirth itself, which is worth knowing when a channel deploys but will not start:
 
 ```
 DeployException: ... one or more destination connectors have queueing
@@ -56,33 +87,26 @@ the server instead.
 
 ### Queue age is absent where there is no queue
 
-Supplying the modes used to fail slot 2:
+The exporter used to publish `mirth_destination_oldest_queued_age_seconds 0.0`
+for every destination, including ones that cannot hold a queue at all, and a `0`
+there says "the queue is empty" rather than "there is no queue" — a rule reading
+it cannot tell a drained queue from one that cannot exist. It now publishes the
+series only for a destination whose `queueEnabled` is true, which is what the
+family's "absent when not observed" already promised.
 
-```
-FAIL contradiction: destination qa-s0-01-metadata/To MLLP claims
-mirth_destination_oldest_queued_age_seconds available, but the channel's
-storage mode METADATA cannot retain a destination queue
-```
-
-The exporter published `mirth_destination_oldest_queued_age_seconds 0.0` for
-every destination, including ones whose storage mode cannot hold a queue, and a
-`0` there says "the queue is empty" rather than "there is no queue" — a rule
-reading it cannot tell a drained queue from one that cannot exist. It now
-publishes the series only for a destination whose `queueEnabled` is true, which
-is what the family's "absent when not observed" already promised.
-
-With the modes supplied the three destinations without a queue are reported as
-gaps rather than as a contradiction, and only the one real queue carries an age:
+So on this deployment exactly one destination carries an age, and the other three
+are reported as gaps rather than as zeros:
 
 ```
 3 capability gap(s) recorded — findings about the deployment, not failures:
-  - qa-s0-01-metadata/Source:  unavailable_by_storage_mode (storage mode METADATA)
-  - qa-s0-01-metadata/To MLLP: unavailable_by_storage_mode (storage mode METADATA)
+  - qa-s0-01-unqueued/Source:   absent (storage mode PRODUCTION)
+  - qa-s0-01-unqueued/To MLLP:  absent (storage mode PRODUCTION)
   - qa-s0-01-production/Source: absent (storage mode PRODUCTION)
 ```
 
-Supply the modes. Left unset everything degrades to `UNKNOWN`, which suppresses
-the storage-mode verdict and hides exactly this kind of disagreement.
+A source connector never has a destination queue, so the two `Source` rows are
+expected; `qa-s0-01-unqueued/To MLLP` is a destination that could queue on this
+storage mode but has queueing turned off.
 
 ## Storage modes are an input, not an observation
 
@@ -93,11 +117,17 @@ guessed: §13 item 2 settled that it is read from the server. Pass it:
 MIRTH_STORAGE_MODES="c1=PRODUCTION,c2=METADATA" test/capability_matrix_test.sh
 ```
 
-A channel not listed is recorded `UNKNOWN`. **`UNKNOWN` suppresses the
-`unavailable_by_storage_mode` verdict**, so on a real server every storage-mode
-finding degrades to plain `absent` unless the modes are supplied — and `absent`
-reads as "chase this down" rather than "this is impossible". Only `DEVELOPMENT`
-and `PRODUCTION` retain a destination queue, so only those can report queue age.
+A channel not listed takes `MIRTH_DEFAULT_STORAGE_MODE`, which is `PRODUCTION` —
+true of every channel on this deployment, and the reason the command above needs
+no arguments in practice. Set it to `UNKNOWN` to go back to recording nothing:
+**`UNKNOWN` suppresses the `unavailable_by_storage_mode` verdict**, so every
+storage-mode finding degrades to plain `absent`, and `absent` reads as "chase
+this down" rather than "this is impossible". `queue_age_source_test.sh` refuses
+to run at all without `MIRTH_STORAGE_MODES`, because for that check UNKNOWN
+everywhere is a vacuous pass.
+
+Only `DEVELOPMENT` and `PRODUCTION` retain a destination queue, so only those can
+report queue age.
 
 ## Without a Mirth
 
